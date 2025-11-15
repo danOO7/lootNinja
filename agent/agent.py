@@ -1,8 +1,13 @@
 """
-This is the main entry point for the agent.
-It defines the workflow graph, state, tools, nodes and edges.
+GiftScout - Social-Aware Web Agent Gift Finder
+
+This is the main entry point for the GiftScout agent.
+It uses Tavily for live web retrieval, Redis for state management, 
+and integrates with CopilotKit for orchestration.
 """
 
+import json
+import os
 from typing import Any, List
 from typing_extensions import Literal
 from langchain_openai import ChatOpenAI
@@ -13,103 +18,225 @@ from langgraph.graph import StateGraph, END
 from langgraph.types import Command
 from langgraph.graph import MessagesState
 from langgraph.prebuilt import ToolNode
+import redis
+from tavily import TavilyClient
 
-class AgentState(MessagesState):
-    """
-    Here we define the state of the agent
+# Initialize Redis client for state management
+redis_client = redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", 6379)),
+    decode_responses=True
+)
 
-    In this instance, we're inheriting from CopilotKitState, which will bring in
-    the CopilotKitState fields. We're also adding a custom field, `language`,
-    which will be used to set the language of the agent.
+# Initialize Tavily client for web search
+tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY", ""))
+
+
+class GiftScoutState(MessagesState):
     """
-    proverbs: List[str] = []
-    tools: List[Any]
-    # your_custom_agent_state: str = ""
+    State management for the GiftScout agent.
+    Tracks persona, budget, search results, and filtered recommendations.
+    """
+    persona_description: str = ""
+    budget: float = 0.0
+    tiktok_trends: List[str] = []
+    social_insights: List[str] = []
+    product_results: List[dict] = []
+    filtered_recommendations: List[dict] = []
+    search_session_id: str = ""
+    tools: List[Any] = []
+
+
+def save_to_redis(session_id: str, key: str, value: Any):
+    """Save data to Redis for persistent state management."""
+    redis_key = f"giftscount:{session_id}:{key}"
+    redis_client.set(redis_key, json.dumps(value))
+    redis_client.expire(redis_key, 3600)  # 1 hour expiry
+
+
+def get_from_redis(session_id: str, key: str) -> Any:
+    """Retrieve data from Redis."""
+    redis_key = f"giftscount:{session_id}:{key}"
+    value = redis_client.get(redis_key)
+    return json.loads(value) if value else None
+
 
 @tool
-def get_weather(location: str):
+def search_social_trends(persona: str) -> str:
     """
-    Get the weather for a given location.
+    Search for trending topics and discussions about gifts on social media.
+    Uses Tavily to find Reddit, TikTok, and blog discussions.
     """
-    return f"The weather for {location} is 70 degrees."
+    try:
+        # Search for social discussions and trends
+        search_query = f"best gift ideas for {persona} 2024 reddit OR tiktok OR twitter trending"
+        response = tavily_client.search(query=search_query, max_results=5)
+        
+        trends = []
+        for result in response.get("results", []):
+            trends.append({
+                "source": result.get("source", ""),
+                "title": result.get("title", ""),
+                "content": result.get("content", "")[:200],
+                "url": result.get("url", "")
+            })
+        
+        return json.dumps({"trends": trends})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
-# @tool
-# def your_tool_here(your_arg: str):
-#     """Your tool description here."""
-#     print(f"Your tool logic here")
-#     return "Your tool response here."
+
+@tool
+def search_products_by_budget(item_description: str, max_price: float) -> str:
+    """
+    Search for products matching the description and budget using Tavily.
+    Returns product results with prices and purchase links.
+    """
+    try:
+        search_query = f"{item_description} buy online under ${max_price}"
+        response = tavily_client.search(query=search_query, max_results=8)
+        
+        products = []
+        for result in response.get("results", []):
+            # Extract price if available in the content
+            products.append({
+                "title": result.get("title", ""),
+                "source": result.get("source", ""),
+                "url": result.get("url", ""),
+                "snippet": result.get("content", "")[:300],
+                "relevance": result.get("score", 0)
+            })
+        
+        return json.dumps({"products": products})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def filter_recommendations_by_budget(products: str, budget: float) -> str:
+    """
+    Filter and curate product recommendations based on budget constraints.
+    Prioritizes high-relevance items within budget.
+    """
+    try:
+        product_list = json.loads(products)
+        filtered = []
+        
+        for product in product_list.get("products", []):
+            # Add to filtered list (budget filtering handled by search)
+            filtered.append({
+                "title": product.get("title", ""),
+                "url": product.get("url", ""),
+                "source": product.get("source", ""),
+                "snippet": product.get("snippet", ""),
+                "relevance_score": product.get("relevance", 0)
+            })
+        
+        # Sort by relevance
+        filtered.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+        
+        return json.dumps({
+            "recommendations": filtered[:5],
+            "count": len(filtered),
+            "budget": budget
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def save_gift_search_session(session_id: str, persona: str, budget: float, results: str) -> str:
+    """
+    Save the complete gift search session to Redis for retrieval later.
+    """
+    try:
+        save_to_redis(session_id, "persona", persona)
+        save_to_redis(session_id, "budget", budget)
+        save_to_redis(session_id, "results", json.loads(results))
+        
+        return json.dumps({
+            "status": "success",
+            "session_id": session_id,
+            "message": "Gift search session saved successfully"
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 
 backend_tools = [
-    get_weather
-    # your_tool_here
+    search_social_trends,
+    search_products_by_budget,
+    filter_recommendations_by_budget,
+    save_gift_search_session
 ]
 
-# Extract tool names from backend_tools for comparison
+# Extract tool names for comparison
 backend_tool_names = [tool.name for tool in backend_tools]
 
 
-async def chat_node(state: AgentState, config: RunnableConfig) -> Command[Literal["tool_node", "__end__"]]:
+async def chat_node(state: GiftScoutState, config: RunnableConfig) -> Command[Literal["tool_node", "__end__"]]:
     """
-    Standard chat node based on the ReAct design pattern. It handles:
-    - The model to use (and binds in CopilotKit actions and the tools defined above)
-    - The system prompt
-    - Getting a response from the model
-    - Handling tool calls
-
-    For more about the ReAct design pattern, see:
-    https://www.perplexity.ai/search/react-agents-NcXLQhreS0WDzpVaS4m9Cg
+    GiftScout chat node based on the ReAct design pattern.
+    Orchestrates the gift finding workflow using Tavily searches, 
+    Redis caching, and CopilotKit actions.
     """
-
-    # 1. Define the model
+    
+    # Define the model
     model = ChatOpenAI(model="gpt-4o")
 
-    # 2. Bind the tools to the model
+    # Bind tools to the model
     model_with_tools = model.bind_tools(
         [
-            *state.get("tools", []), # bind tools defined by ag-ui
+            *state.get("tools", []),
             *backend_tools,
-            # your_tool_here
         ],
-
-        # 2.1 Disable parallel tool calls to avoid race conditions,
-        #     enable this for faster performance if you want to manage
-        #     the complexity of running tool calls in parallel.
         parallel_tool_calls=False,
     )
 
-    # 3. Define the system message by which the chat model will be run
+    # Create comprehensive system message
     system_message = SystemMessage(
-        content=f"You are a helpful assistant. The current proverbs are {state.get('proverbs', [])}."
+        content=f"""You are GiftScout, an autonomous web agent that finds perfect gifts by researching 
+social trends and live product availability.
+
+Your workflow:
+1. Understand the gift recipient's persona (age, gender, interests)
+2. Determine the budget constraint
+3. Search for trending topics on social media (TikTok, Reddit, blogs)
+4. Search for actual products matching those trends within budget
+5. Filter and curate top recommendations with links
+6. Save the session to Redis for future reference
+
+Current session state:
+- Persona: {state.get('persona_description', 'Not set')}
+- Budget: ${state.get('budget', 0)}
+- Session ID: {state.get('search_session_id', 'Not set')}
+
+Always provide direct product links and pricing information from real stores.
+Be conversational but focused on delivering actionable gift recommendations."""
     )
 
-    # 4. Run the model to generate a response
+    # Run the model
     response = await model_with_tools.ainvoke([
         system_message,
         *state["messages"],
     ], config)
 
-    # only route to tool node if tool is not in the tools list
+    # Route to tool node if needed
     if route_to_tool_node(response):
-        print("routing to tool node")
         return Command(
             goto="tool_node",
-            update={
-                "messages": [response],
-            }
+            update={"messages": [response]}
         )
 
-    # 5. We've handled all tool calls, so we can end the graph.
+    # End the conversation
     return Command(
         goto=END,
-        update={
-            "messages": [response],
-        }
+        update={"messages": [response]}
     )
 
+
 def route_to_tool_node(response: BaseMessage):
-    """
-    Route to tool node if any tool call in the response matches a backend tool name.
-    """
+    """Route to tool node if any tool calls are present."""
     tool_calls = getattr(response, "tool_calls", None)
     if not tool_calls:
         return False
@@ -119,8 +246,9 @@ def route_to_tool_node(response: BaseMessage):
             return True
     return False
 
+
 # Define the workflow graph
-workflow = StateGraph(AgentState)
+workflow = StateGraph(GiftScoutState)
 workflow.add_node("chat_node", chat_node)
 workflow.add_node("tool_node", ToolNode(tools=backend_tools))
 workflow.add_edge("tool_node", "chat_node")

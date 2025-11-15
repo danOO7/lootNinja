@@ -15,9 +15,11 @@
   },
   "dependencies": {
     "@ag-ui/langgraph": "0.0.18",
-    "@copilotkit/react-core": "1.10.6",
-    "@copilotkit/react-ui": "1.10.6",
-    "@copilotkit/runtime": "1.10.6",
+    "@copilotkit/react-core": "^1.10.6",
+    "@copilotkit/react-ui": "^1.10.6",
+    "@copilotkit/runtime": "^1.10.6",
+    "@tavily/core": "^0.5.13",
+    "ioredis": "^5.8.2",
     "next": "16.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -27,7 +29,7 @@
   "devDependencies": {
     "@langchain/langgraph-cli": "0.0.40",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^20.19.25",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "concurrently": "^9.1.2",
