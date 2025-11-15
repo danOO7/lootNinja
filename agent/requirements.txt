@@ -1,12 +1,8 @@
-langchain==0.3.27
-langgraph==0.6.6
-langsmith==0.4.23
-openai>=1.68.2,<2.0.0
-fastapi>=0.115.5,<1.0.0
 uvicorn>=0.29.0,<1.0.0
+pydantic-ai-slim[ag-ui]
+pydantic-ai-slim[openai]
 python-dotenv>=1.0.0,<2.0.0
-langgraph-cli[inmem]==0.3.3
-langchain-openai>=0.0.1
-redis>=5.0.0,<6.0.0
+logfire>=4.10.0
 tavily-python>=0.3.0,<1.0.0
-jsonschema>=4.23.0
+redis>=5.0.0,<6.0.0
+langchain-google-genai>=0.2.0

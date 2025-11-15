@@ -8,9 +8,10 @@ and integrates with CopilotKit for orchestration.
 
 import json
 import os
+import logging
 from typing import Any, List
 from typing_extensions import Literal
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
 from langchain.tools import tool
@@ -21,15 +22,36 @@ from langgraph.prebuilt import ToolNode
 import redis
 from tavily import TavilyClient
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Initialize Redis client for state management
-redis_client = redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", 6379)),
-    decode_responses=True
-)
+try:
+    redis_client = redis.Redis(
+        host=os.getenv("REDIS_HOST", "localhost"),
+        port=int(os.getenv("REDIS_PORT", 6379)),
+        decode_responses=True
+    )
+    # Test connection
+    redis_client.ping()
+    logger.info("Redis connection established")
+except Exception as e:
+    logger.error(f"Failed to connect to Redis: {e}")
+    raise
 
 # Initialize Tavily client for web search
-tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY", ""))
+tavily_api_key = os.getenv("TAVILY_API_KEY", "")
+if not tavily_api_key:
+    logger.warning("TAVILY_API_KEY not set - search functionality may not work")
+    
+tavily_client = TavilyClient(api_key=tavily_api_key)
+
+# Check for Google API Key
+google_api_key = os.getenv("GOOGLE_API_KEY", "")
+if not google_api_key:
+    logger.warning("GOOGLE_API_KEY not set - AI functionality will not work")
+
 
 
 class GiftScoutState(MessagesState):
@@ -68,8 +90,12 @@ def search_social_trends(persona: str) -> str:
     Uses Tavily to find Reddit, TikTok, and blog discussions.
     """
     try:
+        if not tavily_api_key:
+            return json.dumps({"error": "Tavily API key not configured"})
+            
         # Search for social discussions and trends
         search_query = f"best gift ideas for {persona} 2024 reddit OR tiktok OR twitter trending"
+        logger.info(f"Searching for trends: {search_query}")
         response = tavily_client.search(query=search_query, max_results=5)
         
         trends = []
@@ -81,9 +107,11 @@ def search_social_trends(persona: str) -> str:
                 "url": result.get("url", "")
             })
         
+        logger.info(f"Found {len(trends)} trends")
         return json.dumps({"trends": trends})
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        logger.error(f"Error in search_social_trends: {e}", exc_info=True)
+        return json.dumps({"error": f"Search failed: {str(e)}", "trends": []})
 
 
 @tool
@@ -93,7 +121,11 @@ def search_products_by_budget(item_description: str, max_price: float) -> str:
     Returns product results with prices and purchase links.
     """
     try:
+        if not tavily_api_key:
+            return json.dumps({"error": "Tavily API key not configured"})
+            
         search_query = f"{item_description} buy online under ${max_price}"
+        logger.info(f"Searching for products: {search_query}")
         response = tavily_client.search(query=search_query, max_results=8)
         
         products = []
@@ -107,9 +139,11 @@ def search_products_by_budget(item_description: str, max_price: float) -> str:
                 "relevance": result.get("score", 0)
             })
         
+        logger.info(f"Found {len(products)} products")
         return json.dumps({"products": products})
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        logger.error(f"Error in search_products_by_budget: {e}", exc_info=True)
+        return json.dumps({"error": f"Search failed: {str(e)}", "products": []})
 
 
 @tool
@@ -180,22 +214,28 @@ async def chat_node(state: GiftScoutState, config: RunnableConfig) -> Command[Li
     Orchestrates the gift finding workflow using Tavily searches, 
     Redis caching, and CopilotKit actions.
     """
-    
-    # Define the model
-    model = ChatOpenAI(model="gpt-4o")
+    try:
+        # Define the model with explicit API key
+        if not google_api_key:
+            raise ValueError("GOOGLE_API_KEY environment variable is not set")
+            
+        model = ChatGoogleGenerativeAI(
+            model="gemini-2.5-pro",
+            google_api_key=google_api_key
+        )
 
-    # Bind tools to the model
-    model_with_tools = model.bind_tools(
-        [
-            *state.get("tools", []),
-            *backend_tools,
-        ],
-        parallel_tool_calls=False,
-    )
+        # Bind tools to the model
+        model_with_tools = model.bind_tools(
+            [
+                *state.get("tools", []),
+                *backend_tools,
+            ],
+            parallel_tool_calls=False,
+        )
 
-    # Create comprehensive system message
-    system_message = SystemMessage(
-        content=f"""You are GiftScout, an autonomous web agent that finds perfect gifts by researching 
+        # Create comprehensive system message
+        system_message = SystemMessage(
+            content=f"""You are GiftScout, an autonomous web agent that finds perfect gifts by researching 
 social trends and live product availability.
 
 Your workflow:
@@ -213,26 +253,36 @@ Current session state:
 
 Always provide direct product links and pricing information from real stores.
 Be conversational but focused on delivering actionable gift recommendations."""
-    )
-
-    # Run the model
-    response = await model_with_tools.ainvoke([
-        system_message,
-        *state["messages"],
-    ], config)
-
-    # Route to tool node if needed
-    if route_to_tool_node(response):
-        return Command(
-            goto="tool_node",
-            update={"messages": [response]}
         )
 
-    # End the conversation
-    return Command(
-        goto=END,
-        update={"messages": [response]}
-    )
+        # Run the model
+        response = await model_with_tools.ainvoke([
+            system_message,
+            *state["messages"],
+        ], config)
+
+        # Route to tool node if needed
+        if route_to_tool_node(response):
+            return Command(
+                goto="tool_node",
+                update={"messages": [response]}
+            )
+
+        # End the conversation
+        return Command(
+            goto=END,
+            update={"messages": [response]}
+        )
+    except Exception as e:
+        logger.error(f"Error in chat_node: {e}", exc_info=True)
+        from langchain_core.messages import AIMessage
+        error_response = AIMessage(
+            content=f"Error processing your request: {str(e)}. Please check the agent logs."
+        )
+        return Command(
+            goto=END,
+            update={"messages": [error_response]}
+        )
 
 
 def route_to_tool_node(response: BaseMessage):

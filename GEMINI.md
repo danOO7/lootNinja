@@ -59,7 +59,7 @@ The application follows a client-server architecture:
 2.  **Set up environment variables:**
     Create a `.env` file in the `agent` directory and add your API keys:
     ```
-    OPENAI_API_KEY=your-openai-api-key
+    OPENAI_API_KEY=your-google-api-key
     TAVILY_API_KEY=your-tavily-api-key
     ```
 
