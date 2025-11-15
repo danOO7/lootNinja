@@ -22,3 +22,29 @@ body,
 html {
   height: 100%;
 }
+
+/* CopilotKit Markdown Styling */
+.copilotKitMarkdownElement {
+  line-height: 1.6;
+}
+
+.copilotKitMarkdownElement ul,
+.copilotKitMarkdownElement ol {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.copilotKitMarkdownElement li {
+  margin: 0;
+  padding: 0;
+}
+
+.copilotKitMarkdownElement li::before {
+  content: none;
+}
+
+.copilotKitMarkdownElement p {
+  margin: 0.5rem 0;
+}
+

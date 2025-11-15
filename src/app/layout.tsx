@@ -5,8 +5,8 @@ import "./globals.css";
 import "@copilotkit/react-ui/styles.css";
 
 export const metadata: Metadata = {
-  title: "Simple Agent - AI Assistant",
-  description: "AI-powered simple agent for answering queries",
+  title: "",
+  description: "",
 };
 
 export default function RootLayout({
