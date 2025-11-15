@@ -1,111 +1,78 @@
 import {
   CopilotRuntime,
+  OpenAIAdapter,
   copilotRuntimeNextJSAppRouterEndpoint,
-  GoogleGenerativeAIAdapter,
 } from "@copilotkit/runtime";
-
-import { LangGraphAgent } from "@ag-ui/langgraph"
 import { NextRequest } from "next/server";
- 
-/**
- * GiftScout CopilotKit Runtime Configuration
- * 
- * This endpoint orchestrates the AI agent that:
- * 1. Searches social trends using Tavily API
- * 2. Finds products with pricing and links
- * 3. Caches results in Redis for performance
- * 4. Returns curated gift recommendations
- */
 
-// Get deployment URL with fallback
-const deploymentUrl = process.env.LANGGRAPH_DEPLOYMENT_URL || "http://localhost:8123";
-console.log(`[CopilotKit] Connecting to LangGraph at: ${deploymentUrl}`);
-
-// Create the Google Gemini adapter for fallback LLM calls
-const serviceAdapter = new GoogleGenerativeAIAdapter({
-  model: "gemini-2.5-pro",
+const serviceAdapter = new OpenAIAdapter({
+  model: "gpt-4o",
 });
 
-// Create the CopilotRuntime with LangGraph integration
 const runtime = new CopilotRuntime({
-  agents: {
-    // GiftScout agent - primary gift discovery agent
-    "giftscount_agent": new LangGraphAgent({
-      deploymentUrl: deploymentUrl,
-      graphId: "giftscount_agent",
-      langsmithApiKey: process.env.LANGSMITH_API_KEY || "",
-    }),
-  },
+  actions: [
+    {
+      name: "simple_agent",
+      description: "A simple request agent for handling user queries",
+      parameters: [
+        {
+          name: "message",
+          type: "string",
+          description: "The user's message or request",
+          required: true,
+        },
+      ],
+      handler: async ({ message }) => {
+        console.log("[simple_agent] Processing:", message);
+        try {
+          const response = await fetch("http://localhost:8000/run", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              input: {
+                user_request: message,
+              },
+            }),
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Agent response: ${response.status}`);
+          }
+          
+          const result = await response.json();
+          console.log("[simple_agent] Response:", result);
+          return result.response || JSON.stringify(result);
+        } catch (error) {
+          console.error("[simple_agent] Error:", error);
+          throw error;
+        }
+      },
+    },
+  ],
 });
- 
-/**
- * Handle POST requests to the CopilotKit runtime endpoint.
- * Processes messages, tool calls, and agent state management.
- */
+
 export const POST = async (req: NextRequest) => {
   try {
-    console.log("[CopilotKit POST] Incoming request");
-
     const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
       runtime,
       serviceAdapter,
       endpoint: "/api/copilotkit",
     });
- 
+
     const response = await handleRequest(req);
-    console.log("[CopilotKit POST] Response status:", response.status);
+
     return response;
   } catch (error) {
-    console.error("[CopilotKit] Error in POST handler:", error);
+    console.error("[CopilotKit POST] Error:", error);
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : "";
-    
-    console.error("[CopilotKit] Full error:", {
-      message: errorMessage,
-      stack: errorStack,
-    });
-    
+
     return new Response(
       JSON.stringify({
-        error: "Failed to process request",
+        error: "Failed to process CopilotKit request",
         message: errorMessage,
-        stack: process.env.NODE_ENV === "development" ? errorStack : undefined,
-        hint: `Ensure LangGraph agent is running at ${deploymentUrl}`,
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
-  }
-};
-
-/**
- * Handle GET requests to the CopilotKit runtime endpoint.
- * Required for agent state retrieval and status checks.
- */
-export const GET = async (req: NextRequest) => {
-  try {
-    console.log("[CopilotKit GET] Incoming request");
-
-    const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
-      runtime,
-      serviceAdapter,
-      endpoint: "/api/copilotkit",
-    });
- 
-    return handleRequest(req);
-  } catch (error) {
-    console.error("[CopilotKit] Error in GET handler:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : "";
-    
-    return new Response(
-      JSON.stringify({
-        error: "Failed to process request",
-        message: errorMessage,
-        stack: process.env.NODE_ENV === "development" ? errorStack : undefined,
-        hint: `Ensure LangGraph agent is running at ${deploymentUrl}`,
+        hint: "Ensure OpenAI API key is set and request is properly formatted",
       }),
       {
         status: 500,
