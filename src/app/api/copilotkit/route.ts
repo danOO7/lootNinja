@@ -1,7 +1,7 @@
 import {
   CopilotRuntime,
-  ExperimentalEmptyAdapter,
   copilotRuntimeNextJSAppRouterEndpoint,
+  OpenAIAdapter,
 } from "@copilotkit/runtime";
 
 import { LangGraphAgent } from "@ag-ui/langgraph"
@@ -17,25 +17,27 @@ import { NextRequest } from "next/server";
  * 4. Returns curated gift recommendations
  */
 
-// Initialize service adapter
-const serviceAdapter = new ExperimentalEmptyAdapter();
+// Create the OpenAI adapter for LLM calls (uses OPENAI_API_KEY)
+const serviceAdapter = new OpenAIAdapter({
+  model: "gpt-4o", // Uses GPT-4o for best gift discovery reasoning
+});
  
 // Create the CopilotRuntime with LangGraph integration
 const runtime = new CopilotRuntime({
   agents: {
-    // GiftScout agent configuration
+    // GiftScout agent - primary gift discovery agent
     "giftscount_agent": new LangGraphAgent({
       deploymentUrl: process.env.LANGGRAPH_DEPLOYMENT_URL || "http://localhost:8123",
       graphId: "giftscount_agent",
       langsmithApiKey: process.env.LANGSMITH_API_KEY || "",
     }),
-    // Fallback to sample agent for compatibility
+    // Sample agent - fallback for compatibility
     "sample_agent": new LangGraphAgent({
       deploymentUrl: process.env.LANGGRAPH_DEPLOYMENT_URL || "http://localhost:8123",
-      graphId: "giftscount_agent", // Use GiftScout agent
+      graphId: "giftscount_agent", // Also uses GiftScout agent
       langsmithApiKey: process.env.LANGSMITH_API_KEY || "",
     }),
-  }
+  },
 });
  
 /**
@@ -44,7 +46,7 @@ const runtime = new CopilotRuntime({
  */
 export const POST = async (req: NextRequest) => {
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
-    runtime, 
+    runtime,
     serviceAdapter,
     endpoint: "/api/copilotkit",
   });

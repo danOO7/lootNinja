@@ -10,7 +10,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
 
   return (
-    <CopilotKit runtimeUrl="/api/copilotkit">
+    <CopilotKit publicApiKey="ck_pub_2f3c4528d076fade691d644551bac4d3" runtimeUrl="/api/copilotkit">
       <div className="flex h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
         <main className="flex-1 overflow-auto">
           <div className="max-w-6xl mx-auto px-4 py-8">
